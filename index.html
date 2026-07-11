@@ -682,7 +682,7 @@
                 // 如果有验证错误，返回默认值
                 if (errors.length > 0) {
                     return {
-                        dL: 0, dC: 0, dH: 0, h_ab: 0, SL: 1, SC: 1, SH: 1, T: 0, F: 0,
+                        dL: 0, da: 0, db: 0, dC: 0, dH: 0, h_ab: 0, stdA: 0, stdB: 0, smplA: 0, smplB: 0, SL: 1, SC: 1, SH: 1, T: 0, F: 0,
                         dE_cmc: 0, isPass: false, tolerance: numVal(currentInput.tolerance) || 1.0,
                         diagnosticReport: {
                             conclusion: "输入值有误",
@@ -734,67 +734,123 @@
                 const tolerance = numVal(currentInput.tolerance) || 1.0;
                 const isPass = dE_cmc <= tolerance;
 
+                // 四方向调整建议阈值（对齐 Excel ±0.15）
+                const ADJ_TH = 0.15;
                 const components = [
-                    { 
-                        id: 'L', 
-                        label: '明度(L*)', 
-                        contrib: contribL, 
-                        diff: dL, 
-                        status: dL > 0 ? "偏浅" : "偏深", 
-                        direction: dL > 0 ? "明度过高" : "明度不足",
-                        action: dL > 0 ? "【减量】减少白粉/白料，或【增量】增加主色浓度" : "【减量】降低主色浓度，或【增量】添加冲淡剂/透明料" 
+                    {
+                        id: 'L',
+                        label: '明度(L*)',
+                        contrib: contribL,
+                        diff: dL,
+                        status: dL > ADJ_TH ? "偏浅" : dL < -ADJ_TH ? "偏深" : "接近",
+                        direction: dL > ADJ_TH ? "明度过高" : dL < -ADJ_TH ? "明度不足" : "明度达标",
+                        action: dL > ADJ_TH ? "应调暗：减少白粉/白料，或增加主色浓度"
+                            : dL < -ADJ_TH ? "应调亮：降低主色浓度，或添加冲淡剂/钛白粉"
+                            : "明度接近标准，无需调整"
                     },
-                    { 
-                        id: 'C', 
-                        label: '彩度(C*)', 
-                        contrib: contribC, 
-                        diff: dC, 
-                        status: dC > 0 ? "偏鲜艳" : "偏灰暗", 
-                        direction: dC > 0 ? "饱和度过高" : "饱和度不足",
-                        action: dC > 0 ? "【抑制】添加极少量补色/对色（消色）进行“压灰”处理" : "【提鲜】增加高纯度主色比例，减少再生料或灰色系组分" 
+                    {
+                        id: 'C',
+                        label: '彩度(C*)',
+                        contrib: contribC,
+                        diff: dC,
+                        status: dC > ADJ_TH ? "偏鲜艳" : dC < -ADJ_TH ? "偏灰暗" : "接近",
+                        direction: dC > ADJ_TH ? "饱和度过高" : dC < -ADJ_TH ? "饱和度不足" : "彩度达标",
+                        action: dC > ADJ_TH ? "应调灰：添加极微量补色/对色进行消色"
+                            : dC < -ADJ_TH ? "应提彩：增加高纯度主色比例，减少灰色组分"
+                            : "彩度接近标准，无需调整"
                     },
-                    { 
-                        id: 'H', 
-                        label: '色相(H*)', 
-                        contrib: contribH, 
-                        diff: dH, 
-                        status: "偏移", 
-                        direction: "色相角度偏差",
-                        action: "【微调】根据色相环，向目标方向追加对应色相的染料/颜料" 
+                    {
+                        id: 'H',
+                        label: '色相(H*)',
+                        contrib: contribH,
+                        diff: dH,
+                        status: dH > ADJ_TH ? "偏移" : "接近",
+                        direction: dH > ADJ_TH ? "色相角度偏差" : "色相达标",
+                        action: dH > ADJ_TH ? "【微调】根据色相环，向目标方向追加对应色相的染料/颜料" : "色相接近标准，无需调整"
+                    },
+                    {
+                        id: 'a',
+                        label: '红绿(a*)',
+                        contrib: da * da,
+                        diff: da,
+                        status: da > ADJ_TH ? "偏红" : da < -ADJ_TH ? "偏绿" : "接近",
+                        direction: da > ADJ_TH ? "偏红" : da < -ADJ_TH ? "偏绿" : "红绿达标",
+                        action: da > ADJ_TH ? "应减红 / 增绿"
+                            : da < -ADJ_TH ? "应增红 / 减绿"
+                            : "红绿向接近标准，无需调整"
+                    },
+                    {
+                        id: 'b',
+                        label: '黄蓝(b*)',
+                        contrib: db * db,
+                        diff: db,
+                        status: db > ADJ_TH ? "偏黄" : db < -ADJ_TH ? "偏蓝" : "接近",
+                        direction: db > ADJ_TH ? "偏黄" : db < -ADJ_TH ? "偏蓝" : "黄蓝达标",
+                        action: db > ADJ_TH ? "应减黄 / 增蓝"
+                            : db < -ADJ_TH ? "应增黄 / 减蓝"
+                            : "黄蓝向接近标准，无需调整"
                     }
                 ].sort((a, b) => b.contrib - a.contrib);
 
-                // 生成深度报告建议
+                // 生成深度报告建议（按主因方向给出）
                 let diagnosticReport = {
                     conclusion: isPass ? "符合标准要求" : "超出容差范围",
                     primaryIssue: components[0].label + components[0].status,
                     suggestions: []
                 };
 
-                // 综合建议逻辑
+                // 综合建议逻辑（按主因方向给出）
                 if (!isPass) {
-                    if (components[0].id === 'L') {
-                        diagnosticReport.suggestions.push(dL > 0 ? "当前样品明度显著偏浅，应优先考虑增加色精/色粉浓度，检查是否白料过量。" : "当前样品明度显著偏深，建议稀释色组分，或适当增加钛白粉/透明底料。");
-                    }
-                    if (components[0].id === 'C') {
-                        diagnosticReport.suggestions.push(dC > 0 ? "色彩过于鲜艳，建议通过添加极其微量的对色（如补色）来降低饱和度，使之向标准靠拢。" : "色彩显得灰暗，建议检查配方中是否混入了干扰色，或增加主色染料的纯度。");
-                    }
-                    if (components[0].id === 'H') {
+                    const top = components[0];
+                    if (top.id === 'L') {
+                        diagnosticReport.suggestions.push(dL > 0
+                            ? "明度显著偏浅（偏亮）：优先增加色精/色粉浓度，检查白料是否过量。"
+                            : "明度显著偏深（偏暗）：建议稀释主色浓度，或适当增加钛白粉/透明底料。");
+                    } else if (top.id === 'C') {
+                        diagnosticReport.suggestions.push(dC > 0
+                            ? "彩度偏高（偏鲜艳）：添加微量补色/对色进行消色，向标准靠拢。"
+                            : "彩度偏低（偏灰暗）：检查配方是否混入干扰色，或提高主色染料纯度。");
+                    } else if (top.id === 'H') {
                         const hDiff = (Math.atan2(smplB, smplA) * (180 / Math.PI) + 360) % 360 - h_ab;
                         const hDir = hDiff > 0 ? "偏黄/红方向" : "偏蓝/绿方向";
                         diagnosticReport.suggestions.push(`色相偏移是主因（${hDir}）。请对照色相环，适当减少偏向色的比例，或追补对角线方向的组分。`);
+                    } else if (top.id === 'a') {
+                        diagnosticReport.suggestions.push(da > 0
+                            ? "红绿向偏红：适当减少红色组分，或追加绿色组分。"
+                            : "红绿向偏绿：适当增加红色组分，或减少绿色组分。");
+                    } else if (top.id === 'b') {
+                        diagnosticReport.suggestions.push(db > 0
+                            ? "黄蓝向偏黄：适当减少黄色组分，或追加蓝色组分。"
+                            : "黄蓝向偏蓝：适当增加黄色组分，或减少蓝色组分。");
                     }
-                    
-                    // 复合建议
-                    if (Math.abs(dL) > 0.5 && Math.abs(dC) > 0.5) {
-                        diagnosticReport.suggestions.push("明度与彩度均有明显偏差，建议采用“先调深浅、后调鲜暗”的步骤分步微调。");
+
+                    // 复合建议：多方向同时超阈值
+                    const overDirs = [
+                        Math.abs(dL) > ADJ_TH && '明度',
+                        Math.abs(dC) > ADJ_TH && '彩度',
+                        Math.abs(da) > ADJ_TH && '红绿',
+                        Math.abs(db) > ADJ_TH && '黄蓝'
+                    ].filter(Boolean);
+                    if (overDirs.length >= 3) {
+                        diagnosticReport.suggestions.push(`共 ${overDirs.length} 个方向（${overDirs.join('、')}）超出 ±${ADJ_TH} 阈值，建议按贡献度由大到小分步微调，每次只调一个方向。`);
+                    } else if (overDirs.length === 2) {
+                        diagnosticReport.suggestions.push(`${overDirs.join('与')}两个方向均有偏差，建议先调主导因素，再微调次要方向。`);
                     }
                 } else {
                     diagnosticReport.suggestions.push("各项指标均在容差范围内，建议维持当前配方生产，注意观察后续批次波动。");
                 }
 
-                return { dL, dC, dH, h_ab: h_ab.toFixed(1), SL, SC, SH, T, F, dE_cmc, isPass, tolerance, diagnosticReport, components };
+                return { dL, da, db, dC, dH, h_ab: h_ab.toFixed(1), stdA, stdB, smplA, smplB, SL, SC, SH, T, F, dE_cmc, isPass, tolerance, diagnosticReport, components };
             }, [currentInput, l, c, inputMode]);
+
+            // 四方向颜色映射（明度L蓝 / 彩度C橙 / 红绿a红 / 黄蓝b琥珀）
+            const dirColor = (id) => ({
+                L: { tag: 'bg-blue-100 text-blue-700', dot: 'bg-blue-500', bar: 'bg-blue-500 shadow-[0_0_8px_rgba(59,130,246,0.5)]' },
+                C: { tag: 'bg-orange-100 text-orange-700', dot: 'bg-orange-500', bar: 'bg-orange-500 shadow-[0_0_8px_rgba(249,115,22,0.5)]' },
+                H: { tag: 'bg-emerald-100 text-emerald-700', dot: 'bg-emerald-500', bar: 'bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.5)]' },
+                a: { tag: 'bg-red-100 text-red-700', dot: 'bg-red-500', bar: 'bg-red-500 shadow-[0_0_8px_rgba(239,68,68,0.5)]' },
+                b: { tag: 'bg-amber-100 text-amber-700', dot: 'bg-amber-500', bar: 'bg-amber-500 shadow-[0_0_8px_rgba(245,158,11,0.5)]' },
+            }[id]);
 
             // 添加记录
             const handleAdd = async () => {
@@ -1696,8 +1752,22 @@
                                                         <label className="block text-center text-xs text-slate-400 mt-1.5 font-medium">h°</label>
                                                     </div>
                                                 </div>
-                                                <div className="text-[10px] text-slate-400 text-center pt-1">
-                                                    a* = C* × cos(h°), b* = C* × sin(h°)
+                                                <div className="mt-3 bg-emerald-50/60 rounded-2xl p-3 border border-emerald-100">
+                                                    <div className="flex items-center justify-between mb-2">
+                                                        <span className="text-[10px] font-bold text-emerald-700 uppercase tracking-wider">LCH → LAB 自动转换</span>
+                                                        <span className="text-[9px] text-slate-400 font-mono">a*=C×cos(h°), b*=C×sin(h°)</span>
+                                                    </div>
+                                                    <div className="grid grid-cols-2 gap-2">
+                                                        <div className="bg-white rounded-xl p-2 border border-emerald-100">
+                                                            <p className="text-[9px] font-bold text-slate-400 mb-1">标准值</p>
+                                                            <p className="font-mono text-[11px] text-slate-700">a* <span className="text-emerald-700 font-bold">{calc.stdA.toFixed(2)}</span>　b* <span className="text-emerald-700 font-bold">{calc.stdB.toFixed(2)}</span></p>
+                                                        </div>
+                                                        <div className="bg-white rounded-xl p-2 border border-emerald-100">
+                                                            <p className="text-[9px] font-bold text-slate-400 mb-1">样品值</p>
+                                                            <p className="font-mono text-[11px] text-slate-700">a* <span className="text-emerald-700 font-bold">{calc.smplA.toFixed(2)}</span>　b* <span className="text-emerald-700 font-bold">{calc.smplB.toFixed(2)}</span></p>
+                                                        </div>
+                                                    </div>
+                                                    <p className="text-[9px] text-slate-400 text-center mt-2">✓ 转换后自动参与 CMC 色差与四方向调整建议</p>
                                                 </div>
                                             </div>
                                         )}
@@ -1745,7 +1815,8 @@
                                                   { label: 'ΔL*', val: calc.dL.toFixed(3), color: 'text-blue-600' },
                                                   { label: 'ΔC*', val: calc.dC.toFixed(3), color: 'text-orange-600' },
                                                   { label: 'ΔH*', val: calc.dH.toFixed(3), color: 'text-emerald-600' },
-                                                  { label: 'h_ab(°)', val: calc.h_ab, color: 'text-slate-900' }
+                                                  { label: 'Δa*', val: calc.da.toFixed(3), color: 'text-red-600' },
+                                                  { label: 'Δb*', val: calc.db.toFixed(3), color: 'text-amber-600' }
                                               ].map(item => (
                                                   <div key={item.label} className="bg-slate-50 p-4 rounded-2xl border border-slate-100 flex-1 min-w-[100px]">
                                                       <p className="text-[10px] font-bold text-slate-400 mb-1">{item.label}</p>
@@ -1773,10 +1844,7 @@
                                                 <div className="bg-white p-4 rounded-2xl shadow-sm border border-slate-100">
                                                     <p className="text-xs font-bold text-slate-400 mb-1.5 uppercase tracking-tight">主要偏差原因</p>
                                                     <div className="flex items-center gap-2">
-                                                        <span className={`px-2 py-0.5 rounded text-[11px] font-bold ${
-                                                            calc.components[0].id === 'L' ? 'bg-blue-100 text-blue-700' :
-                                                            calc.components[0].id === 'C' ? 'bg-orange-100 text-orange-700' : 'bg-emerald-100 text-emerald-700'
-                                                        }`}>
+                                                        <span className={`px-2 py-0.5 rounded text-[11px] font-bold ${dirColor(calc.components[0].id).tag}`}>
                                                             {calc.components[0].label}
                                                         </span>
                                                         <span className="text-xl font-black text-slate-700">{calc.components[0].status}</span>
@@ -1807,10 +1875,7 @@
                                                             <div key={item.id} className="space-y-1.5">
                                                                 <div className="flex justify-between text-xs font-bold mb-1">
                                                                     <div className="flex items-center gap-1.5">
-                                                                        <div className={`w-2.5 h-2.5 rounded-full ${
-                                                                            item.id === 'L' ? 'bg-blue-500' :
-                                                                            item.id === 'C' ? 'bg-orange-500' : 'bg-emerald-500'
-                                                                        }`}></div>
+                                                                        <div className={`w-2.5 h-2.5 rounded-full ${dirColor(item.id).dot}`}></div>
                                                                         <span className="text-slate-600">{item.label}</span>
                                                                         {/* 新增具体偏差数值显示 */}
                                                                         <span className={`ml-2 px-1.5 py-0.5 rounded-md font-mono text-[10px] ${
@@ -1823,11 +1888,7 @@
                                                                 </div>
                                                                 <div className="w-full bg-slate-50 h-3 rounded-full overflow-hidden border border-slate-100 shadow-inner">
                                                                     <div 
-                                                                        className={`h-full transition-all duration-1000 ease-out ${
-                                                                            item.id === 'L' ? 'bg-blue-500 shadow-[0_0_8px_rgba(59,130,246,0.5)]' :
-                                                                            item.id === 'C' ? 'bg-orange-500 shadow-[0_0_8px_rgba(249,115,22,0.5)]' : 
-                                                                            'bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.5)]'
-                                                                        }`}
+                                                                        className={`h-full transition-all duration-1000 ease-out ${dirColor(item.id).bar}`}
                                                                         style={{ width: `${percent}%` }}
                                                                     ></div>
                                                                 </div>
@@ -1852,14 +1913,14 @@
 
                                     <div className="bg-white p-6 rounded-3xl shadow-sm border border-slate-200">
                                         <h3 className="text-xs font-bold text-slate-400 uppercase tracking-widest mb-4">{inputMode === 'LAB' ? 'ISO 105-J03' : 'AATCC 173'} CMC 公式过程变量</h3>
-                                         <div className="grid grid-cols-3 md:grid-cols-5 gap-6 text-center">
+                                         <div className="grid grid-cols-3 md:grid-cols-6 gap-6 text-center">
                                              {[
                                                   { n: 'SL', v: calc.SL, d: '明度加权' }, { n: 'SC', v: calc.SC, d: '彩度加权' }, { n: 'SH', v: calc.SH, d: '色相加权' },
-                                                  { n: 'T', v: calc.T, d: '色调补偿' }, { n: 'F', v: calc.F, d: '彩度系数' }
+                                                  { n: 'T', v: calc.T, d: '色调补偿' }, { n: 'F', v: calc.F, d: '彩度系数' }, { n: 'h_ab', v: calc.h_ab, d: '色相角°' }
                                               ].map(p => (
                                                   <div key={p.n} className="min-w-0">
                                                       <p className="text-xs text-slate-400 font-bold mb-1">{p.n}</p>
-                                                      <p className="text-sm font-mono font-bold text-slate-700 whitespace-nowrap">{p.v.toFixed(4)}</p>
+                                                      <p className="text-sm font-mono font-bold text-slate-700 whitespace-nowrap">{typeof p.v === 'number' ? p.v.toFixed(4) : p.v}</p>
                                                   </div>
                                               ))}
                                          </div>

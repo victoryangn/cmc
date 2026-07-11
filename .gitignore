@@ -5,3 +5,6 @@
 *.swp
 .vscode/
 .idea/
+
+# 本地备份（不提交仓库）
+index.backup.html
