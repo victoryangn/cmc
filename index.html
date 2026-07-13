@@ -2336,6 +2336,15 @@
                                         </div>
                                     </div>
 
+                                    {/* Δa*-Δb* CMC 色差平面图 */}
+                                    <div className="bg-white rounded-3xl p-6 border border-slate-100">
+                                        <div className="flex items-center gap-2 mb-4">
+                                            <div className="w-1.5 h-5 bg-indigo-500 rounded-full"></div>
+                                            <h4 className="font-black text-slate-800 uppercase tracking-wider text-sm">{language === 'zh' ? '色差平面图 Δa*-Δb*' : 'Color Difference Plane Δa*-Δb*'}</h4>
+                                        </div>
+                                        <CMCPlaneChart calc={calc} l={l} c={c} language={language} />
+                                    </div>
+
                                     {/* 颜色对比色块 */}
                                     <ColorCompare calc={calc} language={language} />
 
@@ -2345,14 +2354,6 @@
                                     {/* 色牢度灰卡评级 */}
                                     <GreyscaleRating calc={calc} language={language} />
 
-                                    {/* Δa*-Δb* CMC 色差平面图 */}
-                                    <div className="bg-white rounded-3xl p-6 border border-slate-100">
-                                        <div className="flex items-center gap-2 mb-4">
-                                            <div className="w-1.5 h-5 bg-indigo-500 rounded-full"></div>
-                                            <h4 className="font-black text-slate-800 uppercase tracking-wider text-sm">{language === 'zh' ? '色差平面图 Δa*-Δb*' : 'Color Difference Plane Δa*-Δb*'}</h4>
-                                        </div>
-                                        <CMCPlaneChart calc={calc} l={l} c={c} language={language} />
-                                    </div>
 
                                 </div>
 
