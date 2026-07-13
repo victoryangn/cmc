@@ -330,6 +330,62 @@
             );
         };
 
+        // ============ 色牢度灰卡评级 (ISO 105-A02 变色) ============
+        // 基于 CIE1976 ΔE*ab 映射 1-5 级（含半级）。返回 0-8 索引（对应 5,4-5,...,1）
+        const greyScaleGrade = (dE) => {
+            if (dE < 0.4) return 0;
+            if (dE < 1.2) return 1;
+            if (dE < 2.0) return 2;
+            if (dE < 2.8) return 3;
+            if (dE < 4.0) return 4;
+            if (dE < 5.6) return 5;
+            if (dE < 8.0) return 6;
+            if (dE < 11.0) return 7;
+            return 8;
+        };
+        const GS_LABELS = ['5', '4-5', '4', '3-4', '3', '2-3', '2', '1-2', '1'];
+        const GS_DESC_ZH = ['无变色', '极轻微变色', '轻微变色', '轻明显变色', '明显变色', '较严重变色', '严重变色', '非常严重变色', '完全变色'];
+        const GS_DESC_EN = ['No change', 'Very slight', 'Slight', 'Slight-marked', 'Marked', 'Considerable', 'Serious', 'Very serious', 'Complete'];
+
+        // ============ 灰卡评级组件 ============
+        const GreyscaleRating = ({ calc, language }) => {
+            const zh = language === 'zh';
+            const dE = cie1976(calc.dL, calc.da, calc.db);
+            const idx = greyScaleGrade(dE);
+            return (
+                <div className="bg-white rounded-3xl p-6 border border-slate-100">
+                    <div className="flex items-center gap-2 mb-4">
+                        <div className="w-1.5 h-5 bg-indigo-500 rounded-full"></div>
+                        <h4 className="font-black text-slate-800 uppercase tracking-wider text-sm">{zh ? '色牢度灰卡评级 (ISO 105-A02)' : 'Grey Scale Rating (ISO 105-A02)'}</h4>
+                    </div>
+                    <div className="flex items-center gap-6 mb-4">
+                        <div className="text-center min-w-[90px]">
+                            <p className="text-5xl font-black text-slate-800 tabular-nums leading-none">{GS_LABELS[idx]}</p>
+                            <p className="text-[10px] font-bold text-slate-400 mt-1">{zh ? '级 / Grade' : 'Grade'}</p>
+                        </div>
+                        <div className="flex-1 border-l border-slate-200 pl-6">
+                            <p className="text-base font-bold text-slate-700">{zh ? GS_DESC_ZH[idx] : GS_DESC_EN[idx]}</p>
+                            <p className="text-xs text-slate-500 mt-1">{zh ? '基于 CIE 1976 ΔE*ab = ' : 'Based on CIE 1976 ΔE*ab = '}<span className="font-mono font-bold text-slate-700">{dE.toFixed(3)}</span></p>
+                            <p className="text-[11px] mt-1.5 font-medium"><span className={idx >= 4 ? 'text-rose-600' : 'text-emerald-600'}>{idx <= 1 ? (zh ? '✓ 满足 4 级以上要求' : 'Meets grade 4+') : idx <= 3 ? (zh ? '△ 达到 3-4 级' : 'Reaches grade 3-4') : (zh ? '✗ 未达 3 级' : 'Below grade 3')}</span></p>
+                        </div>
+                    </div>
+                    <div className="flex gap-1">
+                        {GS_LABELS.map((g, i) => {
+                            const gray = Math.round(240 - i * 23);
+                            const isCur = i === idx;
+                            const txtLight = i > 4;
+                            return (
+                                <div key={g} className={'flex-1 rounded-md text-center py-2 ' + (isCur ? 'ring-2 ring-indigo-500 ring-offset-1' : '')} style={{ backgroundColor: 'rgb(' + gray + ',' + gray + ',' + gray + ')' }}>
+                                    <span className="text-[10px] font-bold" style={{ color: txtLight ? '#ffffff' : '#334155' }}>{g}</span>
+                                </div>
+                            );
+                        })}
+                    </div>
+                    <p className="text-[10px] text-slate-400 mt-3 text-center italic">{zh ? '变色色牢度灰卡 (ISO 105-A02)，基于 ΔE*ab；沾色牢度 (A03) 阈值略有不同' : 'Color change fastness (ISO 105-A02) based on ΔE*ab; staining (A03) thresholds differ slightly'}</p>
+                </div>
+            );
+        };
+
         // ============ Δa*-Δb* CMC 色差平面图组件 ============
         // 仪器风格布局（容差椭圆 + 样品点 + 方向标签 + ΔL* 辅助轴）+ 网站 slate/indigo 配色
         // 复用主组件 calc 的 da/db/dL/h_ab/SC/SH，无需新增计算
@@ -2109,6 +2165,9 @@
 
                                     {/* 多色差公式对比 */}
                                     <DeltaECompare calc={calc} language={language} />
+
+                                    {/* 色牢度灰卡评级 */}
+                                    <GreyscaleRating calc={calc} language={language} />
 
                                     {/* Δa*-Δb* CMC 色差平面图 */}
                                     <div className="bg-white rounded-3xl p-6 border border-slate-100">
