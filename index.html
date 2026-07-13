@@ -195,6 +195,60 @@
             }
         };
 
+        // ============ Lab → sRGB 颜色转换（D65 白点，Bruce Lindbloom 标准矩阵） ============
+        // 用于色块预览。注：sRGB 色域有限，超色域颜色会裁剪，仅作近似可视化
+        const labToSrgb = (L, a, b) => {
+            const fy = (L + 16) / 116;
+            const fx = a / 500 + fy;
+            const fz = fy - b / 200;
+            const finv = (t) => { const t3 = t * t * t; return t3 > 0.008856 ? t3 : (t - 16 / 116) / 7.787; };
+            // Lab → XYZ (D65: Xn=95.047 Yn=100 Zn=108.883)
+            const X = 95.047 * finv(fx), Y = 100 * finv(fy), Z = 108.883 * finv(fz);
+            // XYZ(0-100) → 归一化 → linear sRGB (sRGB D65 矩阵)
+            const xn = X / 100, yn = Y / 100, zn = Z / 100;
+            let r = 3.2404542 * xn - 1.5371385 * yn - 0.4985314 * zn;
+            let g = -0.9692660 * xn + 1.8760108 * yn + 0.0415560 * zn;
+            let bl = 0.0556434 * xn - 0.2040259 * yn + 1.0572252 * zn;
+            // linear → sRGB gamma 编码
+            const gam = (c) => c > 0.0031308 ? 1.055 * Math.pow(c, 1 / 2.4) - 0.055 : 12.92 * c;
+            r = gam(r); g = gam(g); bl = gam(bl);
+            const clamp = (v) => Math.max(0, Math.min(255, Math.round(v * 255)));
+            return [clamp(r), clamp(g), clamp(bl)];
+        };
+
+        // ============ 颜色对比色块组件 ============
+        // 标准色 / 样品色按实际 Lab 渲染为 sRGB 色块并排，肉眼直观对比
+        const ColorCompare = ({ calc, language }) => {
+            const zh = language === 'zh';
+            const stdRgb = labToSrgb(calc.stdL, calc.stdA, calc.stdB);
+            const smplRgb = labToSrgb(calc.smplL, calc.smplA, calc.smplB);
+            return (
+                <div className="bg-white rounded-3xl p-6 border border-slate-100">
+                    <div className="flex items-center gap-2 mb-4">
+                        <div className="w-1.5 h-5 bg-indigo-500 rounded-full"></div>
+                        <h4 className="font-black text-slate-800 uppercase tracking-wider text-sm">{zh ? '颜色对比 (D65)' : 'Color Comparison (D65)'}</h4>
+                    </div>
+                    <div className="flex flex-wrap gap-4">
+                        <div className="flex-1 min-w-[140px]">
+                            <div className="h-24 rounded-2xl border border-slate-200 shadow-inner" style={{ backgroundColor: 'rgb(' + stdRgb[0] + ',' + stdRgb[1] + ',' + stdRgb[2] + ')' }} />
+                            <div className="flex justify-between items-center mt-2 px-1">
+                                <span className="text-xs font-bold text-slate-600">{zh ? '标准' : 'Standard'}</span>
+                                <span className="text-[10px] font-mono text-slate-400">{calc.stdL.toFixed(1)} / {calc.stdA.toFixed(1)} / {calc.stdB.toFixed(1)}</span>
+                            </div>
+                        </div>
+                        <div className="flex-1 min-w-[140px]">
+                            <div className="h-24 rounded-2xl border border-slate-200 shadow-inner" style={{ backgroundColor: 'rgb(' + smplRgb[0] + ',' + smplRgb[1] + ',' + smplRgb[2] + ')' }} />
+                            <div className="flex justify-between items-center mt-2 px-1">
+                                <span className="text-xs font-bold text-slate-600">{zh ? '样品' : 'Sample'}</span>
+                                <span className="text-[10px] font-mono text-slate-400">{calc.smplL.toFixed(1)} / {calc.smplA.toFixed(1)} / {calc.smplB.toFixed(1)}</span>
+                            </div>
+                        </div>
+                    </div>
+                    <p className="text-[10px] text-slate-400 mt-3 text-center italic">{zh ? '屏幕显示为 sRGB 近似，超色域颜色会裁剪；以实测 Lab 值为准' : 'sRGB approximation, out-of-gamut clipped; refer to Lab values'}</p>
+                </div>
+            );
+        };
+
         // ============ Δa*-Δb* CMC 色差平面图组件 ============
         // 仪器风格布局（容差椭圆 + 样品点 + 方向标签 + ΔL* 辅助轴）+ 网站 slate/indigo 配色
         // 复用主组件 calc 的 da/db/dL/h_ab/SC/SH，无需新增计算
@@ -825,7 +879,7 @@
                 // 如果有验证错误，返回默认值
                 if (errors.length > 0) {
                     return {
-                        dL: 0, da: 0, db: 0, dC: 0, dH: 0, h_ab: 0, stdA: 0, stdB: 0, smplA: 0, smplB: 0, SL: 1, SC: 1, SH: 1, T: 0, F: 0,
+                        dL: 0, da: 0, db: 0, dC: 0, dH: 0, h_ab: 0, stdL: 0, smplL: 0, stdA: 0, stdB: 0, smplA: 0, smplB: 0, SL: 1, SC: 1, SH: 1, T: 0, F: 0,
                         dE_cmc: 0, isPass: false, tolerance: numVal(currentInput.tolerance) || 1.0,
                         diagnosticReport: {
                             conclusion: "输入值有误",
@@ -983,7 +1037,7 @@
                     diagnosticReport.suggestions.push("各项指标均在容差范围内，建议维持当前配方生产，注意观察后续批次波动。");
                 }
 
-                return { dL, da, db, dC, dH, h_ab: h_ab.toFixed(1), stdA, stdB, smplA, smplB, SL, SC, SH, T, F, dE_cmc, isPass, tolerance, diagnosticReport, components };
+                return { dL, da, db, dC, dH, h_ab: h_ab.toFixed(1), stdL, smplL, stdA, stdB, smplA, smplB, SL, SC, SH, T, F, dE_cmc, isPass, tolerance, diagnosticReport, components };
             }, [currentInput, l, c, inputMode]);
 
             // 四方向颜色映射（明度L蓝 / 彩度C橙 / 红绿a红 / 黄蓝b琥珀）
@@ -1968,6 +2022,9 @@
                                               ))}
                                           </div>
                                      </div>
+
+                                    {/* 颜色对比色块 */}
+                                    <ColorCompare calc={calc} language={language} />
 
                                     {/* Δa*-Δb* CMC 色差平面图 */}
                                     <div className="bg-white rounded-3xl p-6 border border-slate-100">
