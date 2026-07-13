@@ -386,6 +386,65 @@
             );
         };
 
+        // ============ ΔE 批次趋势控制图组件 ============
+        // 折线图显示同品种 ΔE 随批次变化，含均值线、UCL/LCL 控制限、容差线
+        const TrendChart = ({ data, stats, tolerance, language }) => {
+            const zh = language === 'zh';
+            if (!data || data.length === 0) {
+                return <p className="text-center text-slate-400 text-sm py-10">{zh ? '暂无数据 — 请先添加测量记录，或调整上方产品/颜色筛选' : 'No data — add records or adjust product/color filter above'}</p>;
+            }
+            const W = 720, H = 280, padL = 52, padR = 24, padT = 28, padB = 48;
+            const plotW = W - padL - padR, plotH = H - padT - padB;
+            const yMax = Math.max(stats.ucl, stats.max, tolerance) * 1.15;
+            const single = data.length === 1;
+            const xStep = single ? 0 : plotW / (data.length - 1);
+            const xPx = (i) => padL + (single ? plotW / 2 : i * xStep);
+            const yPx = (v) => padT + plotH - v / yMax * plotH;
+            const linePath = data.map((d, i) => (i === 0 ? 'M' : 'L') + xPx(i).toFixed(1) + ',' + yPx(d.dE).toFixed(1)).join(' ');
+            const fmt = (v) => v.toFixed(2);
+            const xLabelIdx = single ? [0] : [0, Math.floor((data.length - 1) / 2), data.length - 1].filter((v, i, a) => a.indexOf(v) === i);
+            return (
+                <svg viewBox={'0 0 ' + W + ' ' + H} className="w-full h-auto" style={{ maxHeight: 320 }} fontFamily="system-ui, -apple-system, sans-serif">
+                    {/* Y 轴网格 + 刻度 */}
+                    {[0, 0.25, 0.5, 0.75, 1].map((f, i) => {
+                        const v = f * yMax, y = yPx(v);
+                        return (
+                            <g key={'g' + i}>
+                                <line x1={padL} y1={y} x2={padL + plotW} y2={y} stroke="#f1f5f9" />
+                                <text x={padL - 6} y={y + 3} fontSize={9} fill="#94a3b8" textAnchor="end">{fmt(v)}</text>
+                            </g>
+                        );
+                    })}
+                    {/* 容差线（红虚线，合格判定） */}
+                    <line x1={padL} y1={yPx(tolerance)} x2={padL + plotW} y2={yPx(tolerance)} stroke="#f43f5e" strokeWidth={1.5} strokeDasharray="6 3" />
+                    <text x={padL + plotW - 4} y={yPx(tolerance) - 4} fontSize={9} fill="#f43f5e" fontWeight={700} textAnchor="end">{zh ? '容差 ' : 'Tol '}{fmt(tolerance)}</text>
+                    {/* UCL 控制限（橙虚线） */}
+                    <line x1={padL} y1={yPx(stats.ucl)} x2={padL + plotW} y2={yPx(stats.ucl)} stroke="#f59e0b" strokeWidth={1} strokeDasharray="3 3" />
+                    <text x={padL + 4} y={yPx(stats.ucl) - 4} fontSize={8} fill="#f59e0b" fontWeight={700}>UCL {fmt(stats.ucl)}</text>
+                    {/* 均值线（靛蓝实线） */}
+                    <line x1={padL} y1={yPx(stats.mean)} x2={padL + plotW} y2={yPx(stats.mean)} stroke="#6366f1" strokeWidth={1.5} />
+                    <text x={padL + 4} y={yPx(stats.mean) - 4} fontSize={9} fill="#6366f1" fontWeight={700}>{zh ? '均值 ' : 'Mean '}{fmt(stats.mean)}</text>
+                    {/* ΔE 折线 */}
+                    <path d={linePath} fill="none" stroke="#6366f1" strokeWidth={2} />
+                    {/* 数据点（合格绿/不合格红） */}
+                    {data.map((d, i) => {
+                        const pass = d.dE <= tolerance;
+                        const tip = '#' + (i + 1) + ' ' + (d.name || '') + (d.productName ? ' ' + d.productName + '/' + d.colorName : '') + '\nΔE = ' + d.dE.toFixed(3) + (pass ? '' : ' ' + (zh ? '(超容差)' : '(over tol)'));
+                        return (
+                            <circle key={d.id} cx={xPx(i)} cy={yPx(d.dE)} r={4.5} fill={pass ? '#10b981' : '#f43f5e'} stroke="#ffffff" strokeWidth={1.5}>
+                                <title>{tip}</title>
+                            </circle>
+                        );
+                    })}
+                    {/* X 轴批次标签 */}
+                    {xLabelIdx.map(i => (
+                        <text key={'x' + i} x={xPx(i)} y={padT + plotH + 16} fontSize={9} fill="#94a3b8" textAnchor="middle">#{i + 1}</text>
+                    ))}
+                    <text x={padL + plotW / 2} y={H - 8} fontSize={10} fill="#64748b" fontWeight={600} textAnchor="middle">{zh ? '批次序号（按测试时间排序）' : 'Batch No. (sorted by time)'}</text>
+                </svg>
+            );
+        };
+
         // ============ Δa*-Δb* CMC 色差平面图组件 ============
         // 仪器风格布局（容差椭圆 + 样品点 + 方向标签 + ΔL* 辅助轴）+ 网站 slate/indigo 配色
         // 复用主组件 calc 的 da/db/dL/h_ab/SC/SH，无需新增计算
@@ -573,6 +632,10 @@
 
             // 历史记录搜索状态
             const [historySearchTerm, setHistorySearchTerm] = useState('');
+            // ΔE 批次趋势图筛选状态
+            const [trendProduct, setTrendProduct] = useState('');
+            const [trendColor, setTrendColor] = useState('');
+            const [trendExcludedIds, setTrendExcludedIds] = useState(new Set());
 
             // 展开行状态
             const [expandedRows, setExpandedRows] = useState(new Set());
@@ -624,6 +687,35 @@
                     (item.factory || '').toLowerCase().includes(term)
                 );
             }, [history, historySearchTerm]);
+
+            // ΔE 批次趋势图：按产品+颜色筛选，排除勾选项，按时间排序
+            const productOptions = useMemo(() => [...new Set(history.map(h => h.productName).filter(Boolean))], [history]);
+            const colorOptions = useMemo(() => [...new Set(history.filter(h => !trendProduct || h.productName === trendProduct).map(h => h.colorName).filter(Boolean))], [history, trendProduct]);
+            const trendData = useMemo(() => {
+                return history
+                    .filter(h => !trendProduct || h.productName === trendProduct)
+                    .filter(h => !trendColor || h.colorName === trendColor)
+                    .filter(h => !trendExcludedIds.has(h.id))
+                    .sort((a, b) => a.timestamp - b.timestamp);
+            }, [history, trendProduct, trendColor, trendExcludedIds]);
+            // 趋势统计（均值、标准差、控制限 UCL/LCL = 均值 ± 2σ）
+            const trendStats = useMemo(() => {
+                if (trendData.length === 0) return null;
+                const dEs = trendData.map(t => t.dE);
+                const mean = dEs.reduce((a, b) => a + b, 0) / dEs.length;
+                const variance = dEs.reduce((a, b) => a + (b - mean) * (b - mean), 0) / dEs.length;
+                const std = Math.sqrt(variance);
+                return { mean: mean, std: std, ucl: mean + 2 * std, lcl: Math.max(0, mean - 2 * std), n: dEs.length, max: Math.max.apply(null, dEs), min: Math.min.apply(null, dEs) };
+            }, [trendData]);
+            const hasExcluded = trendExcludedIds.size > 0;
+            // 切换某条记录是否纳入趋势图
+            const toggleTrendExclude = (id) => {
+                setTrendExcludedIds(prev => {
+                    const next = new Set(prev);
+                    if (next.has(id)) next.delete(id); else next.add(id);
+                    return next;
+                });
+            };
 
             // LAB ↔ LCH 转换函数
             const labToLch = (L, a, b) => {
@@ -2325,10 +2417,40 @@
                                     </p>
                                 )}
                             </div>
+                            {/* ΔE 批次趋势控制图 */}
+                            <div className="p-6 border-b border-slate-100 bg-gradient-to-br from-slate-50 to-indigo-50/30">
+                                <div className="flex items-center gap-2 mb-4">
+                                    <div className="w-1.5 h-5 bg-indigo-500 rounded-full"></div>
+                                    <h4 className="font-black text-slate-800 uppercase tracking-wider text-sm">{language === 'zh' ? 'ΔE 批次趋势控制图' : 'ΔE Batch Trend Control Chart'}</h4>
+                                </div>
+                                <div className="flex flex-wrap gap-3 items-center mb-4">
+                                    <select value={trendProduct} onChange={e => { setTrendProduct(e.target.value); setTrendColor(''); }} className="px-3 py-1.5 border border-slate-200 rounded-lg text-xs bg-white">
+                                        <option value="">{language === 'zh' ? '全部产品' : 'All products'}</option>
+                                        {productOptions.map(p => <option key={p} value={p}>{p}</option>)}
+                                    </select>
+                                    <select value={trendColor} onChange={e => setTrendColor(e.target.value)} className="px-3 py-1.5 border border-slate-200 rounded-lg text-xs bg-white">
+                                        <option value="">{language === 'zh' ? '全部颜色' : 'All colors'}</option>
+                                        {colorOptions.map(c => <option key={c} value={c}>{c}</option>)}
+                                    </select>
+                                    <span className="text-xs text-slate-500">{language === 'zh' ? '已纳入 ' : 'Included '}{trendData.length}{language === 'zh' ? ' 条' : ' records'}</span>
+                                    {hasExcluded ? <button onClick={() => setTrendExcludedIds(new Set())} className="text-xs text-indigo-600 hover:underline font-bold">{language === 'zh' ? '↻ 恢复全部' : '↻ Restore all'}</button> : null}
+                                </div>
+                                <TrendChart data={trendData} stats={trendStats} tolerance={currentInput.tolerance || 1.5} language={language} />
+                                {trendStats ? (
+                                    <div className="flex flex-wrap gap-4 mt-3 text-[11px]">
+                                        <span className="text-slate-600">{language === 'zh' ? '均值 ' : 'Mean '}<b className="font-mono text-indigo-600">{trendStats.mean.toFixed(3)}</b></span>
+                                        <span className="text-slate-600">σ <b className="font-mono">{trendStats.std.toFixed(3)}</b></span>
+                                        <span className="text-slate-600">UCL <b className="font-mono text-amber-600">{trendStats.ucl.toFixed(3)}</b></span>
+                                        <span className="text-slate-600">{language === 'zh' ? '范围 ' : 'Range '}<b className="font-mono">{trendStats.min.toFixed(2)}–{trendStats.max.toFixed(2)}</b></span>
+                                        <span className="text-slate-400 italic">{language === 'zh' ? 'UCL = 均值+2σ（统计控制限，反映批次稳定性，非合格判定）' : 'UCL = mean+2σ (statistical control, not pass/fail)'}</span>
+                                    </div>
+                                ) : null}
+                            </div>
                             <div className="overflow-x-auto scrollbar-thin rounded-xl border border-slate-200 shadow-sm">
                                 <table className="w-full text-left text-sm">
                                     <thead className="bg-gradient-to-r from-slate-50 via-slate-100 to-slate-50 text-slate-600 font-bold text-[11px] uppercase tracking-wide border-b-2 border-slate-300">
                                         <tr>
+                                            <th className="px-3 py-3 w-12 text-center text-[10px]">{language === 'zh' ? '趋势' : 'Trend'}</th>
                                             <th className="px-4 py-3 w-16">{t('mode')}</th>
                                             <th className="px-4 py-3 min-w-[180px]">{t('productName')}</th>
                                             <th className="px-4 py-3 min-w-[150px]">{t('colorName')}</th>
@@ -2347,6 +2469,9 @@
                                                     {/* 主行 - 核心信息 */}
                                                     <tr className="hover:bg-indigo-50/30 transition-all duration-200 group hover:shadow-sm cursor-pointer"
                                                         onClick={() => toggleRow(h.id)}>
+                                                        <td className="px-3 py-4 text-center" onClick={e => e.stopPropagation()}>
+                                                            <input type="checkbox" checked={!trendExcludedIds.has(h.id)} onChange={() => toggleTrendExclude(h.id)} className="w-4 h-4 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500 cursor-pointer" title={language === 'zh' ? '勾选纳入趋势图' : 'Include in trend'} />
+                                                        </td>
                                                         <td className="px-4 py-4">
                                                             <span className={`px-2.5 py-1 rounded-md text-[11px] font-bold tracking-wide shadow-sm ${isLCH ? 'bg-emerald-100 text-emerald-700' : 'bg-indigo-100 text-indigo-700'}`}>
                                                                 {h.inputMode || 'LAB'}
