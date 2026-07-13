@@ -195,6 +195,149 @@
             }
         };
 
+        // ============ Δa*-Δb* CMC 色差平面图组件 ============
+        // 仪器风格布局（容差椭圆 + 样品点 + 方向标签 + ΔL* 辅助轴）+ 网站 slate/indigo 配色
+        // 复用主组件 calc 的 da/db/dL/h_ab/SC/SH，无需新增计算
+        const CMCPlaneChart = ({ calc, l, c, language }) => {
+            // SVG 画布尺寸（viewBox 自动响应式缩放）
+            const W = 560, H = 420;
+            const padL = 46, padR = 108, padT = 36, padB = 46;
+            const plotW = W - padL - padR;
+            const plotH = H - padT - padB;
+            const cx = padL + plotW / 2;   // 标准色（原点）像素 x
+            const cy = padT + plotH / 2;   // 原点像素 y
+
+            // 读取计算结果（h_ab 存为字符串，需转数值）
+            const da = calc.da, db = calc.db, dL = calc.dL;
+            const hDeg = Number(calc.h_ab) || 0;
+            const hRad = hDeg * Math.PI / 180;
+            const SC = calc.SC || 1, SH = calc.SH || 1;
+            const zh = language === 'zh';
+
+            // 视图范围（数据单位）：保证最外圈(2.0)椭圆与样品点均可见
+            const ringC = 2.0 * c * Math.max(SC, 1e-4);  // 彩度方向最外圈半径
+            const ringH = 2.0 * Math.max(SH, 1e-4);       // 色相方向最外圈半径
+            const dataRange = Math.max(ringC * 1.25, ringH * 1.25, Math.abs(da) * 1.35, Math.abs(db) * 1.35, 0.6);
+            const scale = Math.min(plotW, plotH) / (2 * dataRange); // 像素 / 数据单位
+
+            // 数据坐标 → 像素（X 轴=Δb，Y 轴=Δa，+a 朝上需翻转 y）
+            const px = (ddb, dda) => [cx + ddb * scale, cy - dda * scale];
+
+            // 生成 ΔE_CMC=t 的容差椭圆 path（标准色色相角 h_ab 为旋转角）
+            // (ΔC,ΔH) → (Δa,Δb) 逆旋转：Δa = ΔC·cos h − ΔH·sin h；Δb = ΔC·sin h + ΔH·cos h
+            const ellipsePath = (t) => {
+                const aC = Math.max(t * c * SC, 1e-4); // ΔC 方向半轴
+                const aH = Math.max(t * SH, 1e-4);      // ΔH 方向半轴
+                const N = 72, pts = [];
+                for (let i = 0; i <= N; i++) {
+                    const th = (i / N) * 2 * Math.PI;
+                    const dCk = aC * Math.cos(th);
+                    const dHk = aH * Math.sin(th);
+                    const dda = dCk * Math.cos(hRad) - dHk * Math.sin(hRad);
+                    const ddb = dCk * Math.sin(hRad) + dHk * Math.cos(hRad);
+                    const [X, Y] = px(ddb, dda);
+                    pts.push(`${i === 0 ? 'M' : 'L'}${X.toFixed(2)},${Y.toFixed(2)}`);
+                }
+                return pts.join(' ') + ' Z';
+            };
+
+            // ΔL* 辅助轴（右侧竖直数轴）
+            const Lrange = Math.max(Math.abs(dL) * 1.6, 0.6);
+            const Lscale = (plotH / 2) / Lrange;
+            const Lx = padL + plotW + 64;
+            const Ly = (v) => cy - v * Lscale;
+
+            // 网格刻度（自适应 nice step）
+            const niceStep = (r) => {
+                const raw = r / 3;
+                const mag = Math.pow(10, Math.floor(Math.log10(raw)));
+                const n = raw / mag;
+                return (n >= 5 ? 5 : n >= 2 ? 2 : 1) * mag;
+            };
+            const step = niceStep(dataRange);
+            const ticks = [];
+            for (let v = -Math.ceil(dataRange / step) * step; v <= dataRange + 1e-9; v += step) {
+                if (Math.abs(v) < 1e-9) continue;
+                ticks.push(Number(v.toFixed(4)));
+            }
+
+            const rings = [0.5, 1.0, 1.5, 2.0];
+            const [sx, sy] = px(db, da);
+            const sampleColor = calc.isPass ? '#10b981' : '#f43f5e';
+            const lColor = dL >= 0 ? '#f59e0b' : '#6366f1';   // ΔL* 辅助轴样品点配色（偏浅琥珀 / 偏深靛蓝）
+            // 1.0 合格线标签放在 +ΔC 方向端点（彩度方向）
+            const [labX, labY] = px(c * SC * Math.sin(hRad), c * SC * Math.cos(hRad));
+
+            return (
+                <svg viewBox={`0 0 ${W} ${H}`} className="w-full h-auto" style={{ maxHeight: 440 }} fontFamily="system-ui, -apple-system, sans-serif">
+                    {/* 图标题 */}
+                    <text x={padL} y={20} fontSize={12} fontWeight={800} fill="#334155">色差平面 CMC({l}:{c}) D65/10°</text>
+                    <text x={W - padR} y={20} fontSize={8.5} fill="#94a3b8" textAnchor="end">{zh ? '椭圆 = CMC 等色差线，实线为合格边界 (ΔE=1.0)' : 'Ellipses = CMC tolerance, solid = pass (ΔE=1.0)'}</text>
+
+                    {/* 主图背景 */}
+                    <rect x={padL} y={padT} width={plotW} height={plotH} fill="#ffffff" stroke="#e2e8f0" strokeWidth={1} rx={8} />
+
+                    {/* 网格线 */}
+                    {ticks.map((v, i) => {
+                        const [xv] = px(v, 0); const [, yv] = px(0, v);
+                        return (
+                            <g key={'g' + i} stroke="#f1f5f9" strokeWidth={1}>
+                                <path d={`M${xv} ${padT}L${xv} ${padT + plotH}`} fill="none" />
+                                <path d={`M${padL} ${yv}L${padL + plotW} ${yv}`} fill="none" />
+                            </g>
+                        );
+                    })}
+
+                    {/* 中心十字轴 */}
+                    <line x1={padL} y1={cy} x2={padL + plotW} y2={cy} stroke="#94a3b8" strokeWidth={1.2} />
+                    <line x1={cx} y1={padT} x2={cx} y2={padT + plotH} stroke="#94a3b8" strokeWidth={1.2} />
+
+                    {/* 容差椭圆：外圈虚线 + 1.0 合格线高亮 */}
+                    {rings.filter(t => t !== 1.0).map(t => (
+                        <path key={'r' + t} d={ellipsePath(t)} fill="none" stroke="#cbd5e1" strokeWidth={1} strokeDasharray="4 3" />
+                    ))}
+                    <path d={ellipsePath(1.0)} fill="rgba(99,102,241,0.08)" stroke="#6366f1" strokeWidth={2} />
+                    <text x={labX + 4} y={labY - 4} fontSize={9} fill="#6366f1" fontWeight={700}>ΔE=1.0</text>
+
+                    {/* 方向标签：+a*(红)/-a*(绿)/+b*(黄)/-b*(蓝) */}
+                    <text x={cx + 6} y={padT + 12} fontSize={11} fill="#ef4444" fontWeight={700}>+a* {zh ? '红' : ''}</text>
+                    <text x={cx + 6} y={padT + plotH - 6} fontSize={11} fill="#22c55e" fontWeight={700}>−a* {zh ? '绿' : ''}</text>
+                    <text x={padL + plotW - 8} y={cy - 6} fontSize={11} fill="#f59e0b" fontWeight={700} textAnchor="end">+b* {zh ? '黄' : ''}</text>
+                    <text x={padL + 8} y={cy - 6} fontSize={11} fill="#3b82f6" fontWeight={700}>−b* {zh ? '蓝' : ''}</text>
+
+                    {/* 轴标题 */}
+                    <text x={padL + plotW + 6} y={cy + 14} fontSize={10} fill="#64748b" fontWeight={600}>Δb*</text>
+                    <text x={cx - 26} y={padT - 8} fontSize={10} fill="#64748b" fontWeight={600}>Δa*</text>
+
+                    {/* 标准色原点 */}
+                    <circle cx={cx} cy={cy} r={5} fill="none" stroke="#1e293b" strokeWidth={2} />
+                    <circle cx={cx} cy={cy} r={1.5} fill="#1e293b" />
+                    <text x={cx + 8} y={cy + 14} fontSize={9} fill="#64748b">{zh ? '标准' : 'Std'}</text>
+
+                    {/* 样品点 + 悬停提示 + ΔE 标签 */}
+                    <circle cx={sx} cy={sy} r={7} fill={sampleColor} stroke="#ffffff" strokeWidth={2}>
+                        <title>{`Δa* = ${da.toFixed(3)}\nΔb* = ${db.toFixed(3)}\nΔL* = ${dL.toFixed(3)}\nΔE_CMC = ${calc.dE_cmc.toFixed(3)}\n${calc.isPass ? (zh ? '合格' : 'PASS') : (zh ? '不合格' : 'FAIL')}`}</title>
+                    </circle>
+                    <text x={sx + 10} y={sy - 8} fontSize={10} fontWeight={700} fill={sampleColor}>ΔE {calc.dE_cmc.toFixed(2)}</text>
+                    <text x={sx + 10} y={sy + 12} fontSize={9} fill="#475569">{zh ? '样品' : 'Sample'}</text>
+
+                    {/* 右侧 ΔL* 辅助轴 */}
+                    <text x={Lx - 10} y={padT - 8} fontSize={10} fill="#64748b" fontWeight={600}>ΔL*</text>
+                    <line x1={Lx} y1={padT} x2={Lx} y2={padT + plotH} stroke="#94a3b8" strokeWidth={1.2} />
+                    {[0, Lrange / 2, -Lrange / 2].map((v, i) => (
+                        <g key={'L' + i}>
+                            <path d={"M" + (Lx - 4) + " " + Ly(v) + "L" + (Lx + 4) + " " + Ly(v)} stroke="#94a3b8" strokeWidth={1} fill="none" />
+                            <text x={Lx + 7} y={Ly(v) + 3} fontSize={8} fill="#94a3b8">{v.toFixed(1)}</text>
+                        </g>
+                    ))}
+                    <circle cx={Lx} cy={Ly(dL)} r={6} fill={lColor} stroke="#fff" strokeWidth={2}>
+                        <title>{`ΔL* = ${dL.toFixed(3)} (${dL > 0 ? (zh ? '偏浅' : 'Lighter') : (zh ? '偏深' : 'Darker')})`}</title>
+                    </circle>
+                    <text x={Lx + 7} y={Ly(dL) + 3} fontSize={8} fontWeight={700} fill={lColor}>{dL.toFixed(2)}</text>
+                </svg>
+            );
+        };
+
         const App = () => {
             const [l, setL] = useState(2.0);
             const [c, setC] = useState(1.0);
@@ -1825,6 +1968,15 @@
                                               ))}
                                           </div>
                                      </div>
+
+                                    {/* Δa*-Δb* CMC 色差平面图 */}
+                                    <div className="bg-white rounded-3xl p-6 border border-slate-100">
+                                        <div className="flex items-center gap-2 mb-4">
+                                            <div className="w-1.5 h-5 bg-indigo-500 rounded-full"></div>
+                                            <h4 className="font-black text-slate-800 uppercase tracking-wider text-sm">{language === 'zh' ? '色差平面图 Δa*-Δb*' : 'Color Difference Plane Δa*-Δb*'}</h4>
+                                        </div>
+                                        <CMCPlaneChart calc={calc} l={l} c={c} language={language} />
+                                    </div>
 
                                     {/* 深度色差诊断报告 (升级版) */}
                                     <div className="bg-slate-50 rounded-3xl p-6 border border-slate-100">
