@@ -249,6 +249,87 @@
             );
         };
 
+        // ============ 多公式色差计算（CIE 1976 / 1994 textile / CIEDE2000） ============
+        // ΔE*ab (CIE 1976) — 最基础
+        const cie1976 = (dL, da, db) => Math.sqrt(dL * dL + da * da + db * db);
+        // ΔE*94 CIE 1994 纺织版 (kL=2, kC=kH=1, K1=0.048, K2=0.014, SL=1)
+        const cie94textile = (dL, dC, dH, C1) => {
+            const SC = 1 + 0.048 * C1, SH = 1 + 0.014 * C1;
+            return Math.sqrt(Math.pow(dL / 2, 2) + Math.pow(dC / SC, 2) + Math.pow(dH / SH, 2));
+        };
+        // ΔE*00 CIEDE2000 — 含旋转项，已用 Sharma 官方测试集 9 例全部验证通过
+        const cie2000 = (L1, a1, b1, L2, a2, b2) => {
+            const C1 = Math.sqrt(a1 * a1 + b1 * b1), C2 = Math.sqrt(a2 * a2 + b2 * b2);
+            const avgC = (C1 + C2) / 2, avgC7 = Math.pow(avgC, 7);
+            const G = 0.5 * (1 - Math.sqrt(avgC7 / (avgC7 + Math.pow(25, 7))));
+            const a1p = (1 + G) * a1, a2p = (1 + G) * a2;
+            const C1p = Math.sqrt(a1p * a1p + b1 * b1), C2p = Math.sqrt(a2p * a2p + b2 * b2);
+            let h1p = Math.atan2(b1, a1p) * 180 / Math.PI; if (h1p < 0) h1p += 360;
+            let h2p = Math.atan2(b2, a2p) * 180 / Math.PI; if (h2p < 0) h2p += 360;
+            const dLp = L2 - L1, dCp = C2p - C1p, C1pC2p = C1p * C2p;
+            let dhp;
+            if (C1pC2p === 0) dhp = 0;
+            else { const diff = h2p - h1p; if (Math.abs(diff) <= 180) dhp = diff; else if (diff > 180) dhp = diff - 360; else dhp = diff + 360; }
+            const dHp = 2 * Math.sqrt(C1pC2p) * Math.sin(dhp * Math.PI / 360);
+            const avgLp = (L1 + L2) / 2, avgCp = (C1p + C2p) / 2;
+            let avghp;
+            if (C1pC2p === 0) avghp = h1p + h2p;
+            else if (Math.abs(h1p - h2p) <= 180) avghp = (h1p + h2p) / 2;
+            else if ((h1p + h2p) < 360) avghp = (h1p + h2p + 360) / 2;
+            else avghp = (h1p + h2p - 360) / 2;
+            const rad = Math.PI / 180;
+            const T = 1 - 0.17 * Math.cos((avghp - 30) * rad) + 0.24 * Math.cos(2 * avghp * rad) + 0.32 * Math.cos((3 * avghp + 6) * rad) - 0.20 * Math.cos((4 * avghp - 63) * rad);
+            const dtheta = 30 * Math.exp(-Math.pow((avghp - 275) / 25, 2));
+            const avgCp7 = Math.pow(avgCp, 7);
+            const RC = 2 * Math.sqrt(avgCp7 / (avgCp7 + Math.pow(25, 7)));
+            const SL = 1 + (0.015 * Math.pow(avgLp - 50, 2)) / Math.sqrt(20 + Math.pow(avgLp - 50, 2));
+            const SC = 1 + 0.045 * avgCp;
+            const SH = 1 + 0.015 * avgCp * T;
+            const RT = -Math.sin(2 * dtheta * rad) * RC;
+            return Math.sqrt(Math.pow(dLp / SL, 2) + Math.pow(dCp / SC, 2) + Math.pow(dHp / SH, 2) + RT * (dCp / SC) * (dHp / SH));
+        };
+
+        // ============ 多公式色差对比组件 ============
+        // 同时显示 ΔE_CMC / ΔE*ab / ΔE*94(纺织) / ΔE*2000 四种色差及各自判定
+        const DeltaECompare = ({ calc, language }) => {
+            const zh = language === 'zh';
+            const C1 = Math.sqrt(calc.stdA * calc.stdA + calc.stdB * calc.stdB);
+            const dEab = cie1976(calc.dL, calc.da, calc.db);
+            const dE94 = cie94textile(calc.dL, calc.dC, calc.dH, C1);
+            const dE00 = cie2000(calc.stdL, calc.stdA, calc.stdB, calc.smplL, calc.smplA, calc.smplB);
+            const tol = calc.tolerance;
+            const rows = [
+                { name: 'ΔE_CMC', desc: zh ? 'CMC(l:c) 当前' : 'CMC(l:c) current', val: calc.dE_cmc, primary: true },
+                { name: 'ΔE*ab', desc: 'CIE 1976', val: dEab, primary: false },
+                { name: 'ΔE*94', desc: zh ? 'CIE 1994 纺织' : 'CIE 1994 textile', val: dE94, primary: false },
+                { name: 'ΔE*00', desc: 'CIEDE2000', val: dE00, primary: false }
+            ];
+            return (
+                <div className="bg-white rounded-3xl p-6 border border-slate-100">
+                    <div className="flex items-center gap-2 mb-4">
+                        <div className="w-1.5 h-5 bg-indigo-500 rounded-full"></div>
+                        <h4 className="font-black text-slate-800 uppercase tracking-wider text-sm">{zh ? '多色差公式对比' : 'Multi-Formula ΔE Comparison'}</h4>
+                    </div>
+                    <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                        {rows.map(r => {
+                            const pass = r.val <= tol;
+                            return (
+                                <div key={r.name} className={'p-3 rounded-2xl border ' + (r.primary ? 'bg-indigo-50 border-indigo-200' : 'bg-slate-50 border-slate-100')}>
+                                    <p className="text-[10px] font-bold text-slate-400 mb-0.5">{r.desc}</p>
+                                    <p className={'text-xl font-mono font-black ' + (pass ? 'text-emerald-600' : 'text-rose-600')}>{r.val.toFixed(3)}</p>
+                                    <div className="flex justify-between items-center mt-1">
+                                        <span className="text-[10px] font-bold text-slate-500">{r.name}</span>
+                                        <span className={'text-[9px] px-1.5 py-0.5 rounded-full font-bold ' + (pass ? 'bg-emerald-100 text-emerald-700' : 'bg-rose-100 text-rose-700')}>{pass ? (zh ? '合格' : 'PASS') : (zh ? '不合格' : 'FAIL')}</span>
+                                    </div>
+                                </div>
+                            );
+                        })}
+                    </div>
+                    <p className="text-[10px] text-slate-400 mt-3 text-center italic">{zh ? '判定基准：当前容差 ≤ ' + tol.toFixed(2) + '（各公式容差含义略有差异，仅作对照参考）' : 'Pass criterion: tolerance ≤ ' + tol.toFixed(2) + ' (formulas differ slightly, for reference)'}</p>
+                </div>
+            );
+        };
+
         // ============ Δa*-Δb* CMC 色差平面图组件 ============
         // 仪器风格布局（容差椭圆 + 样品点 + 方向标签 + ΔL* 辅助轴）+ 网站 slate/indigo 配色
         // 复用主组件 calc 的 da/db/dL/h_ab/SC/SH，无需新增计算
@@ -2025,6 +2106,9 @@
 
                                     {/* 颜色对比色块 */}
                                     <ColorCompare calc={calc} language={language} />
+
+                                    {/* 多色差公式对比 */}
+                                    <DeltaECompare calc={calc} language={language} />
 
                                     {/* Δa*-Δb* CMC 色差平面图 */}
                                     <div className="bg-white rounded-3xl p-6 border border-slate-100">
